@@ -33,7 +33,7 @@ const server = Bun.serve({
     }
 
     // RUTA GET: Retornar el contenido del archivo
-    if (url.pathname === "/api/md" && method === "GET") {
+    if (url.pathname === "/" && method === "GET") {
       const file = Bun.file(FILE_PATH);
       return new Response(file, {
         headers: {
