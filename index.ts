@@ -1,90 +1,84 @@
-// 1. Definimos la ruta del archivo MD
+// 1. Definimos la ruta del archivo.
+// TIP: Si usas Volúmenes en Railway, cambia esto a "/data/documento.md"
 const FILE_PATH = "./documento.md";
 
-// Interfaz para definir la estructura de los datos que recibiremos (POST)
 interface MarkdownRequest {
   content: string;
 }
 
-// 2. Verificamos/Creamos el archivo al iniciar
+// 2. Aseguramos que el archivo exista al arrancar
 const initialFile = Bun.file(FILE_PATH);
 if (!(await initialFile.exists())) {
-  await Bun.write(FILE_PATH, "# Archivo Inicial\nBienvenido al editor MD.");
-  console.log("📝 Archivo documento.md creado con éxito.");
+  await Bun.write(FILE_PATH, "# Archivo Inicial\nBienvenido al editor.");
 }
 
-// 3. Iniciamos el servidor
+// 3. Servidor con Bun
 const server = Bun.serve({
-  port: 3000,
+  // Railway inyecta el puerto automáticamente en la variable PORT
+  port: process.env.PORT || 3000,
   async fetch(req) {
     const url = new URL(req.url);
     const method = req.method;
 
-    // Configuración de CORS
-    const headers = {
-      "Access-Control-Allow-Origin": "*",
+    // Configuración de CORS completa
+    const corsHeaders = {
+      "Access-Control-Allow-Origin": "*", // Permite peticiones de cualquier lugar (Vercel, Localhost, etc.)
       "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
       "Access-Control-Allow-Headers": "Content-Type",
     };
 
-    // Manejar pre-flight de CORS (Importante para navegadores)
+    // Responder a peticiones de pre-vuelo (Browser Pre-flight)
     if (method === "OPTIONS") {
-      return new Response("ok", { headers });
+      return new Response("ok", { headers: corsHeaders });
     }
 
-    // RUTA PARA OBTENER EL CONTENIDO (GET)
+    // RUTA GET: Retornar el contenido del archivo
     if (url.pathname === "/api/md" && method === "GET") {
       const file = Bun.file(FILE_PATH);
-      return new Response(file, { headers });
+      return new Response(file, {
+        headers: {
+          ...corsHeaders,
+          "Content-Type": "text/markdown; charset=utf-8",
+        },
+      });
     }
 
-    // RUTA PARA GUARDAR EL CONTENIDO (POST)
+    // RUTA POST: Editar el contenido del archivo
     if (url.pathname === "/api/md" && method === "POST") {
       try {
-        // Leemos el JSON y le decimos a TS que tiene el formato de la interfaz
         const body = (await req.json()) as MarkdownRequest;
 
         if (!body || typeof body.content !== "string") {
-          return new Response(
-            JSON.stringify({ error: "Contenido inválido o vacío" }),
-            {
-              status: 400,
-              headers: { ...headers, "Content-Type": "application/json" },
-            }
-          );
+          return new Response(JSON.stringify({ error: "Formato inválido" }), {
+            status: 400,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
         }
 
-        // Escribimos el contenido en el archivo físico
+        // Escritura atómica ultra rápida de Bun
         await Bun.write(FILE_PATH, body.content);
 
         return new Response(
-          JSON.stringify({
-            message: "Guardado correctamente",
-            size: body.content.length,
-          }),
+          JSON.stringify({ message: "Guardado correctamente" }),
           {
-            headers: { ...headers, "Content-Type": "application/json" },
+            status: 200,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
           }
         );
       } catch (err) {
         return new Response(
-          JSON.stringify({
-            error: "El cuerpo de la petición no es un JSON válido",
-          }),
+          JSON.stringify({ error: "Error procesando el archivo" }),
           {
-            status: 400,
-            headers: { ...headers, "Content-Type": "application/json" },
+            status: 500,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
           }
         );
       }
     }
 
-    // Ruta no encontrada
-    return new Response("Ruta no encontrada", {
-      status: 404,
-      headers,
-    });
+    // 404 para cualquier otra ruta
+    return new Response("Not Found", { status: 404, headers: corsHeaders });
   },
 });
 
-console.log(`🚀 Backend corriendo en http://localhost:${server.port}`);
+console.log(`🚀 Servidor listo en el puerto: ${server.port}`);
