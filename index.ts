@@ -1,84 +1,104 @@
-// 1. Definimos la ruta del archivo.
-// TIP: Si usas Volúmenes en Railway, cambia esto a "/data/documento.md"
-const FILE_PATH = "./documento.md";
+import { mkdir, unlink } from "node:fs/promises";
+
+const STORAGE_DIR = "./documentos";
+
+// Asegurar carpeta
+try {
+  await mkdir(STORAGE_DIR, { recursive: true });
+} catch (e) {}
 
 interface MarkdownRequest {
+  title?: string;
   content: string;
 }
 
-// 2. Aseguramos que el archivo exista al arrancar
-const initialFile = Bun.file(FILE_PATH);
-if (!(await initialFile.exists())) {
-  await Bun.write(FILE_PATH, "# Archivo Inicial\nBienvenido al editor.");
-}
-
-// 3. Servidor con Bun
 const server = Bun.serve({
-  // Railway inyecta el puerto automáticamente en la variable PORT
   port: process.env.PORT || 3000,
   async fetch(req) {
     const url = new URL(req.url);
     const method = req.method;
-
-    // Configuración de CORS completa
     const corsHeaders = {
-      "Access-Control-Allow-Origin": "*", // Permite peticiones de cualquier lugar (Vercel, Localhost, etc.)
-      "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
       "Access-Control-Allow-Headers": "Content-Type",
     };
 
-    // Responder a peticiones de pre-vuelo (Browser Pre-flight)
-    if (method === "OPTIONS") {
+    if (method === "OPTIONS")
       return new Response("ok", { headers: corsHeaders });
-    }
 
-    // RUTA GET: Retornar el contenido del archivo
-    if (url.pathname === "/" && method === "GET") {
-      const file = Bun.file(FILE_PATH);
-      return new Response(file, {
-        headers: {
-          ...corsHeaders,
-          "Content-Type": "text/markdown; charset=utf-8",
-        },
+    // --- [CREATE] POST /api/files ---
+    if (url.pathname === "/api/files" && method === "POST") {
+      const body = (await req.json()) as MarkdownRequest;
+      const cleanTitle = (body.title || "sin-titulo")
+        .replace(/[^a-z0-9]/gi, "_")
+        .toLowerCase();
+      const date = new Date().toISOString().split("T")[0];
+      const fileName = `${cleanTitle}-${date}.md`;
+
+      await Bun.write(`${STORAGE_DIR}/${fileName}`, body.content);
+      return new Response(JSON.stringify({ message: "Creado", fileName }), {
+        status: 201,
+        headers: corsHeaders,
       });
     }
 
-    // RUTA POST: Editar el contenido del archivo
-    if (url.pathname === "/api/md" && method === "POST") {
+    // --- [READ LIST] GET /api/files ---
+    if (url.pathname === "/api/files" && method === "GET") {
+      const glob = new Bun.Glob("*.md");
+      const files = [];
+      for await (const file of glob.scan(STORAGE_DIR)) {
+        files.push(file);
+      }
+      return new Response(JSON.stringify(files), { headers: corsHeaders });
+    }
+
+    // --- [READ SINGLE] GET /api/files/:name ---
+    if (url.pathname.startsWith("/api/files/") && method === "GET") {
+      const fileName = url.pathname.replace("/api/files/", "");
+      const file = Bun.file(`${STORAGE_DIR}/${fileName}`);
+      if (!(await file.exists()))
+        return new Response("No existe", { status: 404, headers: corsHeaders });
+
+      return new Response(file, {
+        headers: { ...corsHeaders, "Content-Type": "text/markdown" },
+      });
+    }
+
+    // --- [UPDATE] PUT /api/files/:name ---
+    if (url.pathname.startsWith("/api/files/") && method === "PUT") {
+      const fileName = url.pathname.replace("/api/files/", "");
+      const body = (await req.json()) as MarkdownRequest;
+      const file = Bun.file(`${STORAGE_DIR}/${fileName}`);
+
+      if (!(await file.exists()))
+        return new Response("No existe", { status: 404, headers: corsHeaders });
+
+      await Bun.write(`${STORAGE_DIR}/${fileName}`, body.content);
+      return new Response(JSON.stringify({ message: "Actualizado" }), {
+        headers: corsHeaders,
+      });
+    }
+
+    // --- [DELETE] DELETE /api/files/:name ---
+    if (url.pathname.startsWith("/api/files/") && method === "DELETE") {
+      const fileName = url.pathname.replace("/api/files/", "");
+      const path = `${STORAGE_DIR}/${fileName}`;
+
       try {
-        const body = (await req.json()) as MarkdownRequest;
-
-        if (!body || typeof body.content !== "string") {
-          return new Response(JSON.stringify({ error: "Formato inválido" }), {
-            status: 400,
-            headers: { ...corsHeaders, "Content-Type": "application/json" },
-          });
-        }
-
-        // Escritura atómica ultra rápida de Bun
-        await Bun.write(FILE_PATH, body.content);
-
-        return new Response(
-          JSON.stringify({ message: "Guardado correctamente" }),
-          {
-            status: 200,
-            headers: { ...corsHeaders, "Content-Type": "application/json" },
-          }
-        );
-      } catch (err) {
-        return new Response(
-          JSON.stringify({ error: "Error procesando el archivo" }),
-          {
-            status: 500,
-            headers: { ...corsHeaders, "Content-Type": "application/json" },
-          }
-        );
+        await unlink(path);
+        return new Response(JSON.stringify({ message: "Eliminado" }), {
+          headers: corsHeaders,
+        });
+      } catch (e) {
+        return new Response("No se pudo eliminar", {
+          status: 404,
+          headers: corsHeaders,
+        });
       }
     }
 
-    // 404 para cualquier otra ruta
     return new Response("Not Found", { status: 404, headers: corsHeaders });
   },
 });
 
-console.log(`🚀 Servidor listo en el puerto: ${server.port}`);
+console.log(`🚀 CRUD MD listo en: ${server.port}`);
